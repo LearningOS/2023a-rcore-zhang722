@@ -21,3 +21,7 @@ pub const MAX_SYSCALL_NUM: usize = 500;
 pub const CLOCK_FREQ: usize = 12500000;
 /// the physical memory end
 pub const MEMORY_END: usize = 0x88000000;
+
+// Custom
+/// the number of current system calls
+pub const SYSCALL_NUM :usize = 5;
