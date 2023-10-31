@@ -1,60 +1,38 @@
-实现了获得系统调用时刻距离任务第一次被调度时刻的时长，任务使用的系统调用及调用次数功能。不采用桶计数统计系统调用次数，转而采用两个短数组进行统计，节约了开销。
-在config.rs中定义系统调用数量，以节约统计开销
-~~~Rust
-// Custom
-/// the number of current system calls
-pub const SYSCALL_NUM :usize = 5;
-~~~
+## 实现功能
+实现了获得系统调用时刻距离任务第一次被调度时刻的时长，任务使用的系统调用及调用次数功能。不采用桶计数统计系统调用次数，转而采用两个短数组进行统计，节约了开销。本实现主要有以下细节：
+* 在config.rs中定义系统调用数量，以节约统计开销。由于TaskInfo中对系统调用的统计是用桶计数序完成的，而在OS实现中，采用了另一种计数方式，所以需要在syscall/process.rs中对得到的任务信息进行抽取并赋值到TaskInfo中
+* 第一次运行的时间由TaskManager维护。用Option<usize>储存第一次运行的时间
+* 调用次数由syscall函数进行维护
 
-由于TaskInfo中对系统调用的统计是用桶计数序完成的，而在OS实现中，采用了另一种计数方式，所以需要在syscall/process.rs中对得到的任务信息进行抽取并赋值到TaskInfo中
-~~~Rust
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!("kernel: sys_task_info");
-    let info = get_current_task_info();
-    let mut syscall_times = [0u32; MAX_SYSCALL_NUM];
-    for (&syscall_id, syscall_time) in info.sys_call_ids.iter().zip(info.sys_call_nums) {
-        syscall_times[syscall_id] = syscall_time as u32;
-    }
-    let current_time = get_time_ms();
-    unsafe {
-        (*_ti).status = TaskStatus::Running;
-        (*_ti).time = current_time - info.time.unwrap_or(0);
-        (*_ti).syscall_times = syscall_times;
-    }
-    0
-}
-~~~
+## 简答作业
+### 1
+* sbi版本：`[rustsbi] RustSBI version 0.3.0-alpha.2, adapting to RISC-V SBI v1.0.0`
+* 程序出错分别为
+  1. [kernel] PageFault in application, bad addr = 0x0, bad instruction = 0x804003c4, kernel killed it.
+  2. [kernel] IllegalInstruction in application, kernel killed it.
+  3. [kernel] IllegalInstruction in application, kernel killed it.
 
-第一次运行的时间由TaskManager维护。用Option<usize>储存第一次运行的时间
-~~~Rust
-/// Get info
-fn current_task_info(&self) -> TaskInfoBlock {
-    let inner = self.inner.exclusive_access();
-    let current = inner.current_task;
+### 2
+1. 刚进入 __restore 时，a0 代表了什么值。 __restore 的两种使用情景：1. 完成系统调用后从内核栈恢复上下文；2. 切换下一个应用程序时构造程序所需上下文。
+2. 特殊处理了以下三个寄存器：
+    1. sstatus: 返回用户态时，硬件通过将 mstatus 的 MPIE 域复制到MIE 来恢复之前的中断使能设置，并将权限模式设置为 mstatus 的 MPP 域中的值，因此需要正确恢复
+    2. sepc: mret 会将 PC 设置为 mepc，以跳转到用户态指令
+    3. sscratch： 需要将sscratch恢复为用户栈地址，以交换栈
+3. x2是sp，我们后面还要用到它，找到每个寄存器保存到的正确位置；x4是tp，我们用不到多线程，因此不用保存该寄存器。
+4. 该指令之后，sp 指向用户栈栈顶， sscratch 指向内核栈栈顶。
+5. 发生状态切换在ret指令，mret 会将 PC 设置为 mepc，从而跳转到用户态指令。
+6. 该指令之后，sp 指向内核栈栈顶， sscratch 指向用户栈栈顶。
+7. 在用户态执行 ecall 即可从 U 态进入 S 态。
 
-    inner.task_infos[current]
-}
+## 荣誉准则
+1. 在完成本次实验的过程（含此前学习的过程）中，我曾分别与 以下各位 就（与本次实验相关的）以下方面做过交流，还在代码中对应的位置以注释形式记录了具体的交流对象及内容：
 
-/// Update task info
-fn update_task_info(&self, syscall_id: usize) -> isize {
-    let mut inner = self.inner.exclusive_access();
-    let current = inner.current_task;
-    
-    let info = &mut inner.task_infos[current];
-    if let Some(idx) = info.sys_call_ids.iter().position(|&x| x == syscall_id) {
-        info.sys_call_nums[idx] += 1;
-        return 0;
-    } else if let Some(idx) = info.sys_call_ids.iter().position(|&x| x == 0) {
-        info.sys_call_ids[idx] = syscall_id;
-        info.sys_call_nums[idx] += 1;
-        return 0;
-    }
-    -1
-    
-}
-~~~
+        无交流对象
 
-调用次数由syscall函数进行维护
-~~~Rust
-let _ = task::update_current_task_info(syscall_id);
-~~~
+    此外，我也参考了 以下资料 ，还在代码中对应的位置以注释形式记录了具体的参考来源及内容：
+
+        实现本章功能没有参考资料
+
+2. 我独立完成了本次实验除以上方面之外的所有工作，包括代码与文档。 我清楚地知道，从以上方面获得的信息在一定程度上降低了实验难度，可能会影响起评分。
+
+3. 我从未使用过他人的代码，不管是原封不动地复制，还是经过了某些等价转换。 我未曾也不会向他人（含此后各届同学）复制或公开我的实验代码，我有义务妥善保管好它们。 我提交至本实验的评测系统的代码，均无意于破坏或妨碍任何计算机系统的正常运转。 我清楚地知道，以上情况均为本课程纪律所禁止，若违反，对应的实验成绩将按“-100”分计。
