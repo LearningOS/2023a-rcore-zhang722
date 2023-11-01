@@ -47,6 +47,10 @@ impl MemorySet {
             areas: Vec::new(),
         }
     }
+    /// Get page table
+    pub fn page_table(&mut self) -> &mut PageTable {
+        &mut self.page_table
+    }
     /// Get the page table token
     pub fn token(&self) -> usize {
         self.page_table.token()
@@ -270,8 +274,9 @@ pub struct MapArea {
     map_type: MapType,
     map_perm: MapPermission,
 }
-
+/// MapArea
 impl MapArea {
+    /// constructor
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -287,6 +292,7 @@ impl MapArea {
             map_perm,
         }
     }
+    /// map one
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
         match self.map_type {
@@ -303,24 +309,28 @@ impl MapArea {
         page_table.map(vpn, ppn, pte_flags);
     }
     #[allow(unused)]
+    /// unmap_one
     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
         }
         page_table.unmap(vpn);
     }
+    /// map
     pub fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.map_one(page_table, vpn);
         }
     }
     #[allow(unused)]
+    /// unmap
     pub fn unmap(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.unmap_one(page_table, vpn);
         }
     }
     #[allow(unused)]
+    /// shrink to
     pub fn shrink_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(new_end, self.vpn_range.get_end()) {
             self.unmap_one(page_table, vpn)
@@ -328,6 +338,7 @@ impl MapArea {
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
     #[allow(unused)]
+    /// append to
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
             self.map_one(page_table, vpn)
@@ -361,7 +372,9 @@ impl MapArea {
 #[derive(Copy, Clone, PartialEq, Debug)]
 /// map type for memory set: identical or framed
 pub enum MapType {
+    /// identical
     Identical,
+    /// framed
     Framed,
 }
 
@@ -376,6 +389,12 @@ bitflags! {
         const X = 1 << 3;
         ///Accessible in U mode
         const U = 1 << 4;
+    }
+}
+
+impl From<usize> for MapPermission {
+    fn from(value: usize) -> Self {
+        MapPermission::from_bits_truncate(value as u8)
     }
 }
 
