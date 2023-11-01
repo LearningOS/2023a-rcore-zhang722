@@ -1,6 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PhysAddr};
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -170,4 +170,35 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// get T on virtual addr from kernel
+pub fn user2kernel<T>(token: usize, ptr: *const T) -> &'static mut T {
+    let page_table = PageTable::from_token(token);
+    let addr = ptr as usize;
+    let virt_addr = VirtAddr::from(addr);
+    let vpn = virt_addr.floor();
+    let ppn = page_table
+        .translate(vpn)
+        .unwrap()
+        .ppn();
+    let mut pa = PhysAddr::from(ppn);
+    pa = PhysAddr(usize::from(pa) | virt_addr.page_offset());
+    pa.get_mut::<T>()
+}
+
+/// buffer assign
+pub fn byte_buffer_assign(src: &[u8], des: &[&'static mut [u8]]) {
+    let mut len = 0;
+    for &d in des {
+        len += d.len();
+    }
+    assert_eq!(src.len(), len);
+    let mut idx = 0;
+    for &d in des {
+        for e in d {
+            *e = src[idx];
+            idx += 1;
+        }
+    }
 }
