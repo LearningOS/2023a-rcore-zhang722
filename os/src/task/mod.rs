@@ -14,6 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -44,8 +45,21 @@ pub struct TaskManager {
 struct TaskManagerInner {
     /// task list
     tasks: Vec<TaskControlBlock>,
+    /// task info list
+    task_infos: Vec<TaskInfoBlock>,
     /// id of current `Running` task
     current_task: usize,
+}
+
+/// Task info
+#[derive(Clone, Copy)]
+pub struct TaskInfoBlock {
+    /// ids
+    pub sys_call_ids: [usize; SYSCALL_NUM],
+    /// numbers
+    pub sys_call_nums: [usize; SYSCALL_NUM],
+    /// first run time
+    pub time: Option<usize>,
 }
 
 lazy_static! {
@@ -57,12 +71,22 @@ lazy_static! {
         let mut tasks: Vec<TaskControlBlock> = Vec::new();
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
+            
+        }
+        let mut task_infos :Vec<TaskInfoBlock> = Vec::new(); 
+        for _i in 0..num_app {
+            task_infos.push(TaskInfoBlock {
+                sys_call_ids: [0; SYSCALL_NUM],
+                sys_call_nums: [0; SYSCALL_NUM],
+                time: None,
+            })
         }
         TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
+                    task_infos,
                     current_task: 0,
                 })
             },
@@ -153,6 +177,32 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Get info
+    fn current_task_info(&self) -> TaskInfoBlock {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+
+        inner.task_infos[current]
+    }
+
+    /// Update task info
+    fn update_task_info(&self, syscall_id: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        
+        let info = &mut inner.task_infos[current];
+        if let Some(idx) = info.sys_call_ids.iter().position(|&x| x == syscall_id) {
+            info.sys_call_nums[idx] += 1;
+            return 0;
+        } else if let Some(idx) = info.sys_call_ids.iter().position(|&x| x == 0) {
+            info.sys_call_ids[idx] = syscall_id;
+            info.sys_call_nums[idx] += 1;
+            return 0;
+        }
+        -1
+        
+    }
 }
 
 /// Run the first task in task list.
@@ -202,3 +252,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
 }
+
+
+/// Get task info
+pub fn get_current_task_info() -> TaskInfoBlock {
+    TASK_MANAGER.current_task_info()
+}
+
+/// Update current task info
+pub fn update_current_task_info(syscall_id: usize) -> isize {
+    TASK_MANAGER.update_task_info(syscall_id)
+} 

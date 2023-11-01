@@ -5,9 +5,10 @@ use crate::{
     config::MAX_SYSCALL_NUM,
     task::{
         change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, current_user_token,
+        get_current_task_info, 
     },
-    mm::user2kernel,
-    timer::get_time_us,
+    mm::{translated_byte_buffer, byte_buffer_assign},
+    timer::{get_time_us, get_time_ms},
 };
 
 #[repr(C)]
@@ -48,13 +49,20 @@ pub fn sys_yield() -> isize {
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
     let us = get_time_us();
+    let tv = TimeVal {
+        sec: us / 1000000,
+        usec: us % 1000000,
+    };
+    let tv_buffer: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            &tv as *const _ as *const u8, 
+            16,
+        )
+    };
     let token = current_user_token();
-    let sec = user2kernel(token, _ts as *mut usize) as *mut usize;
-    unsafe {
-        let usec = user2kernel(token, (_ts as *mut usize).offset(1)) as *mut usize;
-        *sec = us / 1_000_000;
-        *usec = us % 1_000_000;
-    }
+    let mut buffer = translated_byte_buffer(token, _ts as *const u8, 16);
+    byte_buffer_assign(tv_buffer, &mut buffer);
+ 
     0
 }
 
@@ -63,7 +71,32 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
-    -1
+    let info = get_current_task_info();
+    let mut syscall_times = [0u32; MAX_SYSCALL_NUM];
+    for (&syscall_id, syscall_time) in info.sys_call_ids.iter().zip(info.sys_call_nums) {
+        syscall_times[syscall_id] = syscall_time as u32;
+    }
+    let current_time = get_time_ms();
+    let ti = TaskInfo {
+        status: TaskStatus::Running,
+        time: current_time - info.time.unwrap_or(0),
+        syscall_times,
+    };
+    
+    let ti_buffer: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            &ti as *const _ as *const u8, 
+            core::mem::size_of::<TaskInfo>(),
+        )
+    };
+    let token = current_user_token();
+    let mut buffer = translated_byte_buffer(
+        token, 
+        _ti as *const u8, 
+        core::mem::size_of::<TaskInfo>());
+    byte_buffer_assign(ti_buffer, &mut buffer);
+
+    0
 }
 
 // YOUR JOB: Implement mmap.
