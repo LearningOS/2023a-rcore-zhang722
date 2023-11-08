@@ -213,3 +213,20 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .unwrap()
         .get_mut()
 }
+
+
+/// buffer assign
+pub fn byte_buffer_assign(src: &[u8], des: &mut [&'static mut [u8]]) {
+    let mut len = 0;
+    for d in des.iter() {
+        len += d.len();
+    }
+    assert_eq!(src.len(), len);
+    let mut idx = 0;
+    for d in des {
+        for e in d.iter_mut() {
+            *e = src[idx];
+            idx += 1;
+        }
+    }
+}

@@ -4,11 +4,14 @@
 //! the current running state of CPU is recorded,
 //! and the replacement and transfer of control flow of different applications are executed.
 
+
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
+use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use lazy_static::*;
 
@@ -61,6 +64,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.time.is_none() {
+                task_inner.time = Some(get_time_ms());
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -108,4 +114,28 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Update current task info
+pub fn update_current_info(syscall_id: usize) {
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+
+    let syscall_times = &mut inner.syscall_times;
+    // modify an entry before an insert with in-place mutation
+    syscall_times.entry(syscall_id).and_modify(|mana| *mana += 1).or_insert(1);
+}
+
+/// Get current task info
+pub fn current_syscall_times() -> BTreeMap<usize, usize> {
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    inner.syscall_times.clone()
+}
+
+/// Get current task run time
+pub fn current_run_time() -> Option<usize> {
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    inner.time
 }
