@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use crate::{
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
-    mm::{translated_byte_buffer, translated_refmut, translated_str, byte_buffer_assign},
+    mm::{translated_byte_buffer, translated_refmut, translated_str, byte_buffer_assign, VirtAddr, VPNRange, MapPermission},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, current_syscall_times, current_run_time, TaskStatus,
@@ -154,19 +154,62 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_mmap",
         current_task().unwrap().pid.0
     );
-    -1
+    let start = VirtAddr::from(_start);
+    if !start.aligned() || _port & !0x7 != 0 || _port & 0x7 == 0 {
+        return -1;
+    }
+    let start = start.floor();
+    let end = VirtAddr::from(_start + _len).ceil();
+    let vpns = VPNRange::new(start, end);
+    let task = current_task().unwrap();
+    // check the range [start, start + len)
+    let mut inner = task.inner_exclusive_access();
+    // check if any virtual page already mapped
+    for vpn in vpns {
+        if let Some(pte) = inner.memory_set.translate(vpn) {
+            if pte.is_valid() {
+                return -1;
+            }
+        }
+    }
+    inner.memory_set.insert_framed_area(
+        start.into(),
+        end.into(),
+        MapPermission::from_bits_truncate((_port << 1) as u8) | MapPermission::U
+    ); 
+    
+    0
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_munmap",
         current_task().unwrap().pid.0
     );
-    -1
+    let start = VirtAddr::from(_start);
+    if !start.aligned() {
+        return -1;
+    }
+    let start = start.floor();
+    let end = VirtAddr::from(_start + _len).ceil();
+    let vpns = VPNRange::new(start, end);
+    let task = current_task().unwrap();
+    // check the range [start, start + len)
+    let mut inner = task.inner_exclusive_access();
+    // check if any virtual page already mapped
+    for vpn in vpns {
+        if let Some(pte) = inner.memory_set.translate(vpn) {
+            if !pte.is_valid() {
+                return -1;
+            }
+        }
+    }
+    inner.memory_set.remove_area_with_start_vpn(start);
+    0
 }
 
 /// change data segment size
