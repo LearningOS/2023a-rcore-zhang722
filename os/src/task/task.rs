@@ -9,6 +9,49 @@ use alloc::collections::BTreeMap;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+use core::cmp::Ordering;
+
+const BIG_STRIDE: u64 = 1u64 << 16;
+const HALF_MAX_U64: u64 = 1u64 << 63;
+
+pub struct Stride(u64);
+
+impl Ord for Stride {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.0.cmp(&other.0) {
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Greater => {
+                if self.0 - other.0 > HALF_MAX_U64 {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            },
+            Ordering::Less => {
+                if other.0 - self.0 > HALF_MAX_U64 {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+        }
+    }
+}
+
+impl PartialOrd for Stride {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Stride {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Eq for Stride {}
+
 
 /// Task control block structure
 ///
@@ -36,6 +79,25 @@ impl TaskControlBlock {
         inner.memory_set.token()
     }
 }
+
+impl Ord for TaskControlBlock {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.inner_exclusive_access().stride.cmp(&other.inner_exclusive_access().stride)
+    }
+}
+impl PartialOrd for TaskControlBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for TaskControlBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner_exclusive_access().stride.eq(&other.inner_exclusive_access().stride)
+    }
+}
+
+impl Eq for TaskControlBlock {}
 
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
@@ -75,6 +137,15 @@ pub struct TaskControlBlockInner {
 
     /// Runtime from first running
     pub time: Option<usize>,
+
+    /// Prio
+    pub prio: u64,
+
+    /// Stride
+    pub stride: Stride,
+
+    /// Pass
+    pub pass: u64,
 }
 
 impl TaskControlBlockInner {
@@ -127,6 +198,9 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     syscall_times: BTreeMap::new(),
                     time: None,
+                    prio: 16,
+                    stride: Stride(0),
+                    pass: BIG_STRIDE / 16,
                 })
             },
         };
@@ -202,6 +276,9 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     syscall_times: BTreeMap::new(),
                     time: None,
+                    prio: 16,
+                    stride: Stride(0),
+                    pass: BIG_STRIDE / 16,
                 })
             },
         });
@@ -250,6 +327,9 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     syscall_times: BTreeMap::new(),
                     time: None,
+                    prio: 16,
+                    stride: Stride(0),
+                    pass: BIG_STRIDE / 16,
                 })
             },
         });
@@ -298,6 +378,13 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// Set prio
+    pub fn set_prio(&self, prio: u64) {
+        // ---- access parent PCB exclusively
+        let mut inner = self.inner_exclusive_access();
+        inner.prio = prio;
     }
 }
 
